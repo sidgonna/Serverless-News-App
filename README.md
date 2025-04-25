@@ -1,5 +1,3 @@
----
-
 # Serverless News Aggregator (Updated)
 
 This project implements a serverless news aggregator using AWS services. It fetches news articles from RSS feeds, stores them in DynamoDB, exposes them via a secured API Gateway endpoint, and displays them on a static website hosted on S3 and delivered via CloudFront with HTTPS. User authentication is handled by Amazon Cognito using a manual OAuth 2.0 PKCE flow implemented in the frontend JavaScript.
@@ -605,5 +603,3 @@ Create a static frontend (HTML, CSS, JavaScript) that manually handles the Cogni
 *   [OAuth 2.0 Authorization Framework](https://tools.ietf.org/html/rfc6749)
 *   [Proof Key for Code Exchange (PKCE)](https://tools.ietf.org/html/rfc7636)
 *   [feedparser Documentation](https://feedparser.readthedocs.io/en/latest/)
-
----
