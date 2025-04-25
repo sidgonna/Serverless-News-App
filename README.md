@@ -1,5 +1,3 @@
-Okay, here is the complete, updated project plan incorporating the manual Cognito integration (OAuth 2.0 PKCE flow) for the frontend instead of using the AWS Amplify library.
-
 ---
 
 # Serverless News Aggregator (Updated)
