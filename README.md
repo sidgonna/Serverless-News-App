@@ -1,6 +1,6 @@
-# Serverless News Aggregator (Updated)
+# Serverless News Aggregator
 
-This project implements a serverless news aggregator using AWS services. It fetches news articles from RSS feeds, stores them in DynamoDB, exposes them via a secured API Gateway endpoint, and displays them on a static website hosted on S3 and delivered via CloudFront with HTTPS. User authentication is handled by Amazon Cognito using a manual OAuth 2.0 PKCE flow implemented in the frontend JavaScript.
+This project implements a serverless news aggregator using AWS services. It fetches news articles from RSS feeds, stores them in DynamoDB, exposes them via a secured API Gateway endpoint, and displays them on a static website hosted on S3 and delivered via CloudFront with HTTPS. User authentication is handled by Amazon Cognito.
 
 ## Table of Contents
 
@@ -15,7 +15,7 @@ This project implements a serverless news aggregator using AWS services. It fetc
     *   [Step 6: Set Up API Gateway with Cognito Authorizer](#step-6-set-up-api-gateway-with-cognito-authorizer)
     *   [Step 7: Set Up S3 for Website Hosting](#step-7-set-up-s3-for-website-hosting)
     *   [Step 8: Set Up CloudFront Distribution for HTTPS](#step-8-set-up-cloudfront-distribution-for-https)
-    *   [Step 9: Build and Deploy Frontend (Manual Cognito Integration)](#step-9-build-and-deploy-frontend-manual-cognito-integration)
+    *   [Step 9: Build and Deploy Frontend](#step-9-build-and-deploy-frontend)
 *   [Testing and Monitoring](#testing-and-monitoring)
 *   [Cleanup (Optional)](#cleanup-optional)
 *   [Resources](#resources)
@@ -23,12 +23,10 @@ This project implements a serverless news aggregator using AWS services. It fetc
 ## Prerequisites
 
 *   AWS account with access to Lambda, DynamoDB, API Gateway, S3, CloudFront, Cognito, and CloudWatch.
-*   Basic knowledge of Python, HTML, CSS, JavaScript, and AWS console usage.
-*   Basic understanding of OAuth 2.0 Authorization Code Grant with PKCE.
+*   Basic knowledge of Python, JavaScript, and AWS console usage.
 *   AWS CLI installed and configured (`aws configure`).
-*   Node.js and npm installed (optional, useful for managing dependencies like Axios or using bundlers).
+*   Node.js and npm installed for local frontend development.
 *   A registered domain name (optional, but recommended for CloudFront with a custom SSL certificate).
-*   `axios` library (can be included via CDN or installed via npm).
 
 ## Architecture
 
@@ -38,11 +36,11 @@ The architecture consists of the following components:
 *   **AWS DynamoDB (`NewsArticles`)**: Stores the fetched news articles.
 *   **AWS CloudWatch Events**: Triggers the `FetchNews` Lambda function on a schedule.
 *   **AWS Lambda (`GetNews`)**: Retrieves news articles from DynamoDB.
-*   **AWS Cognito User Pool**: Manages user sign-up, sign-in, and token issuance.
+*   **AWS Cognito User Pool**: Manages user sign-up, sign-in, and authentication.
 *   **AWS API Gateway (HTTP API)**: Exposes the `GetNews` Lambda function and secures it using a Cognito Authorizer.
-*   **AWS S3**: Hosts the static frontend website files (HTML, CSS, JS).
+*   **AWS S3**: Hosts the static frontend website files.
 *   **AWS CloudFront**: Distributes the S3 content, provides HTTPS, and improves performance.
-*   **Frontend (HTML/CSS/JS)**: A static single-page application that manually implements the OAuth 2.0 PKCE flow with Cognito for authentication and calls the secured API Gateway endpoint using fetched tokens to display news.
+*   **Frontend (React)**: A single-page application that interacts with Cognito for authentication and the secured API Gateway endpoint to display news.
 
 ```mermaid
 graph LR
@@ -51,11 +49,8 @@ graph LR
     API_Gateway[API Gateway] --> LambdaGet[Lambda (GetNews)]
     LambdaGet --> DynamoDB
     Cognito[Cognito User Pool] --> API_Gateway
-    Frontend[Frontend (HTML/CSS/JS)] -->|Login Redirect| Cognito
-    Cognito -->|Redirect w/ Code| Frontend
-    Frontend -->|Token Request| Cognito
-    Cognito -->|Tokens| Frontend
-    Frontend -->|API Call w/ Token| API_Gateway
+    Frontend[Frontend (React)] --> Cognito
+    Frontend --> API_Gateway
     S3[S3 Bucket] --> CloudFront[CloudFront Distribution]
     CloudFront --> Frontend
     User[User] --> CloudFront
@@ -65,532 +60,414 @@ graph LR
 
 Follow these steps to set up the serverless news aggregator.
 
-*(Steps 1-8 remain identical to the previous plan, focusing on setting up the backend infrastructure: DynamoDB, Lambdas, CloudWatch, Cognito Pool, API Gateway, S3 Bucket, and CloudFront Distribution. Ensure Cognito App Client is configured for Authorization Code Grant and as a Public Client, and API Gateway uses the Cognito Authorizer and has correct CORS settings.)*
+### Step 1: Set Up DynamoDB Table
 
----
+Create a DynamoDB table to store news articles.
 
-**(Step 1: Set Up DynamoDB Table)** - *Same as before*
-**(Step 2: Create Lambda Function for News Fetching)** - *Same as before*
-**(Step 3: Schedule News Fetching with CloudWatch Events)** - *Same as before*
-**(Step 4: Create Lambda Function for API)** - *Same as before*
-**(Step 5: Set Up Cognito User Pool)** - *Same as before - Ensure App Client has **Authorization Code Grant** enabled, is a **Public Client**, and **Callback/Logout URLs** match your CloudFront domain.*
-**(Step 6: Set Up API Gateway with Cognito Authorizer)** - *Same as before - Ensure **Authorizer** uses correct User Pool/Client ID, is attached to `/articles`, and **CORS** allows CloudFront origin + `Authorization` header.*
-**(Step 7: Set Up S3 for Website Hosting)** - *Same as before*
-**(Step 8: Set Up CloudFront Distribution for HTTPS)** - *Same as before*
+1.  Navigate to **DynamoDB** in the AWS Console.
+2.  Click **Create Table**.
+    *   **Name:** `NewsArticles`
+    *   **Partition Key:** `articleId` (String)
+    *   **Attributes (Example):** `Title` (String), `Description` (String), `PubDate` (String), `Source` (String), `Link` (String). *(Note: Only the partition key is strictly required at table creation)*.
+    *   **Settings:** Use default settings (on-demand capacity is simpler for this example).
+3.  Click **Create table**.
+4.  Note the table **ARN** (Amazon Resource Name) for later use in IAM policies.
 
----
+### Step 2: Create Lambda Function for News Fetching
 
-### Step 9: Build and Deploy Frontend (Manual Cognito Integration)
+Set up a Lambda function to fetch RSS feeds and store articles in DynamoDB.
 
-Create a static frontend (HTML, CSS, JavaScript) that manually handles the Cognito authentication flow (OAuth 2.0 PKCE) and fetches articles from the secured API Gateway endpoint.
-
-1.  **Create Project Files:**
-    *   Create a directory, e.g., `news-aggregator-frontend-manual`.
-    *   Inside, create:
-        *   `index.html` (Main page structure)
-        *   `style.css` (Styling)
-        *   `config.js` (Cognito and API configuration)
-        *   `app.js` (Authentication logic and API calls)
-
-2.  **Configure Frontend (`config.js`):**
-    *   Create `config.js` and populate it with your specific AWS resource details. **Replace ALL placeholders.**
-
-    ```javascript
-    // config.js
-    const config = {
-        cognito: {
-            userPoolId: 'YOUR_USER_POOL_ID', // From Step 5
-            clientId: 'YOUR_APP_CLIENT_ID', // From Step 5
-            // Domain looks like: your-prefix.auth.your-region.amazoncognito.com
-            domain: 'YOUR_COGNITO_DOMAIN', // From Step 5 (App Integration -> Domain)
-            // Your CloudFront HTTPS URL - must match exactly what's in Cognito App Client settings
-            redirectUri: 'https://YOUR_CLOUDFRONT_DOMAIN_NAME/', // From Step 8
-             // Your CloudFront HTTPS URL - must match Cognito App Client logout URL(s)
-            logoutUri: 'https://YOUR_CLOUDFRONT_DOMAIN_NAME/',
-            region: 'YOUR_REGION' // e.g., 'us-east-1'
-        },
-        api: {
-            // Full Invoke URL for your API stage (e.g., ...execute-api.us-east-1.amazonaws.com/prod)
-            invokeUrl: 'https://YOUR_API_GATEWAY_INVOKE_URL/prod' // From Step 6
-        }
-    };
+1.  Navigate to **Lambda** in the AWS Console.
+2.  Click **Create Function**.
+    *   **Function name:** `FetchNews`
+    *   **Runtime:** Python 3.9 (or a later supported version)
+    *   **Architecture:** `x86_64`
+    *   **Permissions:** Choose **Create a new role with basic Lambda permissions**. We will add DynamoDB permissions later.
+3.  Click **Create function**.
+4.  **Add Code:**
+    *   Replace the default `lambda_function.py` content with the following:
+5.  **Install Dependencies:**
+    *   The `feedparser` library is not included in the standard Lambda runtime. Create a deployment package.
+    ```bash
+    # On your local machine
+    mkdir lambda_package_fetch
+    pip install feedparser -t lambda_package_fetch/
+    # Copy your lambda function code into the directory
+    cp lambda_function.py lambda_package_fetch/
+    cd lambda_package_fetch
+    zip -r ../fetch_news_deployment.zip .
+    cd ..
     ```
-
-3.  **Create HTML (`index.html`):**
-    *   Set up the basic structure for login/logout buttons, user info display, and the news article section.
-
-    ```html
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Serverless News Aggregator</title>
-        <link rel="stylesheet" href="style.css">
-    </head>
-    <body>
-        <div class="container">
-            <h1>Serverless News Aggregator</h1>
-
-            <div id="auth-section">
-                <p id="auth-message">Please log in to see the news.</p>
-                <button id="login-button">Log In</button>
-                <button id="logout-button" style="display: none;">Log Out</button>
-            </div>
-
-            <div id="user-info" style="display: none;">
-                <p>Welcome, <span id="user-email"></span>!</p>
-            </div>
-
-            <hr>
-
-            <div id="news-section" style="display: none;">
-                <h2>Latest News</h2>
-                <div id="articles-container">
-                    <!-- Articles will be loaded here by app.js -->
-                </div>
-                <p id="loading-message" style="display: none;">Loading articles...</p>
-                <p id="error-message" style="display: none; color: red;"></p>
-            </div>
-        </div>
-
-        <!-- Include Axios via CDN (simplest) -->
-        <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
-        <!-- Include your config first, then the app logic -->
-        <script src="config.js"></script>
-        <script src="app.js"></script>
-    </body>
-    </html>
-    ```
-
-4.  **Add Styling (`style.css`):**
-    *   Add basic CSS rules for layout and appearance.
-
-    ```css
-    /* style.css */
-    body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        margin: 0;
-        background-color: #f8f9fa;
-        line-height: 1.6;
-        color: #212529;
-    }
-    .container {
-        max-width: 800px;
-        margin: 30px auto;
-        padding: 25px;
-        background-color: #ffffff;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        border-radius: 8px;
-    }
-    h1, h2 {
-        text-align: center;
-        color: #343a40;
-        margin-bottom: 1.5rem;
-    }
-    #auth-section, #user-info {
-        text-align: center;
-        margin-bottom: 25px;
-        padding: 15px;
-        background-color: #e9ecef;
-        border-radius: 4px;
-    }
-    button {
-        padding: 10px 20px;
-        background-color: #0d6efd;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 1rem;
-        margin: 5px;
-        transition: background-color 0.2s ease-in-out;
-    }
-    button:hover {
-        background-color: #0b5ed7;
-    }
-    #logout-button {
-        background-color: #dc3545;
-    }
-    #logout-button:hover {
-        background-color: #bb2d3b;
-    }
-    hr {
-        margin: 25px 0;
-        border: 0;
-        border-top: 1px solid #dee2e6;
-    }
-    #news-section {
-        margin-top: 25px;
-    }
-    .article {
-        border: 1px solid #dee2e6;
-        padding: 20px;
-        margin-bottom: 20px;
-        border-radius: 5px;
-        background-color: #ffffff;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
-    .article h3 {
-        margin-top: 0;
-        margin-bottom: 0.5rem;
-        color: #0d6efd;
-        font-size: 1.25rem;
-    }
-    .article p {
-        margin-bottom: 0.5rem;
-        color: #495057;
-    }
-    .article a {
-        color: #0d6efd;
-        text-decoration: none;
-        font-weight: 500;
-    }
-    .article a:hover {
-        text-decoration: underline;
-    }
-    .article-meta {
-        font-size: 0.875em;
-        color: #6c757d;
-    }
-     #loading-message, #error-message {
-        text-align: center;
-        padding: 10px;
-        margin-top: 15px;
-        border-radius: 4px;
-    }
-    #loading-message {
-        color: #0dcaf0;
-        background-color: #cff4fc;
-        border: 1px solid #b6effb;
-    }
-    #error-message {
-        color: #dc3545;
-        background-color: #f8d7da;
-        border: 1px solid #f5c2c7;
-    }
-    ```
-
-5.  **Implement JavaScript Logic (`app.js`):**
-    *   Add the code to handle the OAuth 2.0 PKCE flow and API interactions.
-
-    ```javascript
-    // app.js
-
-    // --- Configuration (Ensure config.js is loaded first) ---
-    const cognitoConfig = config.cognito;
-    const apiConfig = config.api;
-
-    // --- DOM Elements ---
-    const loginButton = document.getElementById('login-button');
-    const logoutButton = document.getElementById('logout-button');
-    const authMessage = document.getElementById('auth-message');
-    const userInfo = document.getElementById('user-info');
-    const userEmail = document.getElementById('user-email');
-    const newsSection = document.getElementById('news-section');
-    const articlesContainer = document.getElementById('articles-container');
-    const loadingMessage = document.getElementById('loading-message');
-    const errorMessage = document.getElementById('error-message');
-
-    // --- PKCE Helper Functions ---
-    function generateCodeVerifier() {
-        const randomBytes = window.crypto.getRandomValues(new Uint8Array(32));
-        return base64UrlEncode(randomBytes);
-    }
-
-    async function generateCodeChallenge(verifier) {
-        const encoder = new TextEncoder();
-        const data = encoder.encode(verifier);
-        const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
-        return base64UrlEncode(new Uint8Array(hashBuffer));
-    }
-
-    function base64UrlEncode(byteArray) {
-        let base64 = btoa(String.fromCharCode.apply(null, byteArray));
-        return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-    }
-
-    // --- Authentication Functions ---
-    async function redirectToCognito() {
-        try {
-            const codeVerifier = generateCodeVerifier();
-            sessionStorage.setItem('pkce_code_verifier', codeVerifier);
-            const codeChallenge = await generateCodeChallenge(codeVerifier);
-
-            const params = new URLSearchParams({
-                response_type: 'code',
-                client_id: cognitoConfig.clientId,
-                redirect_uri: cognitoConfig.redirectUri,
-                scope: 'openid email profile', // Ensure these scopes are enabled in Cognito App Client
-                code_challenge: codeChallenge,
-                code_challenge_method: 'S256'
-            });
-
-            const authorizeUrl = `https://${cognitoConfig.domain}/oauth2/authorize?${params.toString()}`;
-            window.location.assign(authorizeUrl);
-        } catch (error) {
-            console.error("Error preparing for Cognito redirect:", error);
-            setError("Could not initiate login. Please try again.");
-        }
-    }
-
-    async function handleAuthentication() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const authCode = urlParams.get('code');
-
-        // Clean params from URL
-        window.history.replaceState({}, document.title, window.location.pathname);
-
-        if (authCode) {
-            setLoading(true); // Show loading while exchanging code
-            authMessage.style.display = 'none'; // Hide initial message
-            loginButton.style.display = 'none'; // Hide login button
-
-            try {
-                const codeVerifier = sessionStorage.getItem('pkce_code_verifier');
-                if (!codeVerifier) throw new Error("PKCE code verifier missing from session storage.");
-                sessionStorage.removeItem('pkce_code_verifier');
-
-                const tokenEndpoint = `https://${cognitoConfig.domain}/oauth2/token`;
-                const tokenParams = new URLSearchParams({
-                    grant_type: 'authorization_code',
-                    client_id: cognitoConfig.clientId,
-                    code: authCode,
-                    redirect_uri: cognitoConfig.redirectUri,
-                    code_verifier: codeVerifier
-                });
-
-                const response = await fetch(tokenEndpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: tokenParams.toString()
-                });
-
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(`Token exchange failed: ${errorData.error_description || response.statusText}`);
+6.  **Upload Deployment Package:**
+    *   In the Lambda console for `FetchNews`, under **Code source**, click **Upload from** and select **.zip file**.
+    *   Upload the `fetch_news_deployment.zip` file.
+7.  **Configure Runtime Settings:**
+    *   Ensure the **Handler** is set to `lambda_function.lambda_handler`.
+8.  **Set Environment Variables:**
+    *   Under **Configuration** > **Environment variables**, add:
+        *   Key: `DYNAMODB_TABLE`, Value: `NewsArticles`
+9.  **Increase Timeout:**
+    *   Under **Configuration** > **General configuration**, edit the **Timeout**. Set it to `1` minute or higher (e.g., `5` min `0` sec) as fetching multiple feeds can take time.
+10. **Add Permissions:**
+    *   Go to **Configuration** > **Permissions**. Click the **Role name**.
+    *   In the IAM console, click **Add permissions** > **Attach policies**.
+    *   Click **Create policy**.
+    *   Go to the **JSON** tab and paste the following policy (replace `region` and `account-id` with your specific values, or use the ARN copied in Step 1):
+        ```json
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "dynamodb:PutItem",
+                        "dynamodb:UpdateItem"
+                    ],
+                    "Resource": "arn:aws:dynamodb:YOUR_REGION:YOUR_ACCOUNT_ID:table/NewsArticles"
                 }
-
-                const tokens = await response.json();
-                sessionStorage.setItem('id_token', tokens.id_token);
-                sessionStorage.setItem('access_token', tokens.access_token);
-                // Optional: Store refresh_token for automatic refresh logic
-
-                updateUI(true);
-                await fetchArticles(); // Fetch articles *after* successful login
-
-            } catch (error) {
-                console.error("Authentication error:", error);
-                setError(`Authentication failed: ${error.message}. Please try logging in again.`);
-                updateUI(false); // Show login button again
-            } finally {
-                setLoading(false);
-            }
-        } else {
-            // Check if already logged in (tokens in storage)
-            const idToken = sessionStorage.getItem('id_token');
-            if (idToken && isTokenValid(idToken)) { // Add token validation
-                updateUI(true);
-                await fetchArticles(); // Fetch articles if already logged in
-            } else {
-                // Clear potentially expired tokens
-                sessionStorage.removeItem('id_token');
-                sessionStorage.removeItem('access_token');
-                updateUI(false); // Not logged in or token expired
-            }
+            ]
         }
-    }
-
-    function isTokenValid(token) {
-        if (!token) return false;
-        try {
-            const payload = JSON.parse(atob(token.split('.')[1]));
-            const expiry = payload.exp * 1000; // Convert to milliseconds
-            return Date.now() < expiry;
-        } catch (e) {
-            console.error("Error decoding or validating token:", e);
-            return false;
-        }
-    }
-
-    function logout() {
-        sessionStorage.removeItem('id_token');
-        sessionStorage.removeItem('access_token');
-
-        const params = new URLSearchParams({
-            client_id: cognitoConfig.clientId,
-            logout_uri: cognitoConfig.logoutUri
-        });
-        const logoutUrl = `https://${cognitoConfig.domain}/logout?${params.toString()}`;
-        window.location.assign(logoutUrl);
-    }
-
-    // --- API Call Function ---
-    async function fetchArticles() {
-        const idToken = sessionStorage.getItem('id_token');
-        if (!idToken || !isTokenValid(idToken)) {
-             setError("Your session has expired or is invalid. Please log in again.");
-             updateUI(false); // Force re-login state
-             setLoading(false);
-             return;
-        }
-
-        setLoading(true);
-        setError(null);
-        articlesContainer.innerHTML = '';
-
-        try {
-            // Use axios if included, otherwise use fetch
-            const response = await axios.get(`${apiConfig.invokeUrl}/articles`, {
-                headers: {
-                    Authorization: `Bearer ${idToken}` // Send ID token
-                }
-            });
-             // Check if response.data exists and is an array
-             if (Array.isArray(response.data)) {
-                displayArticles(response.data);
-             } else {
-                 console.error("API response is not an array:", response.data);
-                 setError("Received unexpected data format from the server.");
-             }
-        } catch (error) {
-            console.error("Error fetching articles:", error);
-            if (error.response) {
-                 // The request was made and the server responded with a status code
-                 // that falls out of the range of 2xx
-                 if (error.response.status === 401 || error.response.status === 403) {
-                     setError("Authentication failed or session expired. Please log in again.");
-                     updateUI(false); // Force re-login state
-                 } else {
-                      setError(`Failed to fetch articles: Server responded with status ${error.response.status}.`);
-                 }
-            } else if (error.request) {
-                // The request was made but no response was received
-                 setError("Failed to fetch articles: No response from server. Check network connection.");
-            } else {
-                // Something happened in setting up the request that triggered an Error
-                setError(`Failed to fetch articles: ${error.message}.`);
-            }
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    // --- UI Update Functions ---
-    function updateUI(isLoggedIn) {
-        if (isLoggedIn) {
-            authMessage.style.display = 'none';
-            loginButton.style.display = 'none';
-            logoutButton.style.display = 'inline-block'; // Use inline-block for buttons
-            newsSection.style.display = 'block';
-            userInfo.style.display = 'block';
-
-            try {
-                const idToken = sessionStorage.getItem('id_token');
-                const payload = JSON.parse(atob(idToken.split('.')[1]));
-                userEmail.textContent = payload.email || 'user';
-            } catch (e) {
-                console.error("Error decoding token for display:", e);
-                userEmail.textContent = 'user';
-            }
-        } else {
-            authMessage.style.display = 'block';
-            loginButton.style.display = 'inline-block';
-            logoutButton.style.display = 'none';
-            newsSection.style.display = 'none';
-            articlesContainer.innerHTML = '';
-            userInfo.style.display = 'none';
-            userEmail.textContent = '';
-        }
-         // Clear loading/error messages when UI state changes significantly
-        setLoading(false);
-        setError(null);
-    }
-
-    function displayArticles(articles) {
-        articlesContainer.innerHTML = ''; // Clear previous
-        if (!articles || articles.length === 0) {
-            articlesContainer.innerHTML = '<p>No articles available right now.</p>';
-            return;
-        }
-
-        articles.forEach(article => {
-            const articleDiv = document.createElement('div');
-            articleDiv.className = 'article';
-            // Sanitize content minimally - consider a proper sanitization library for production
-            const title = article.Title ? article.Title.replace(/<[^>]*>/g, '') : 'No Title';
-            const description = article.Description ? article.Description.replace(/<[^>]*>/g, '') : 'No Description';
-            const source = article.Source ? article.Source.replace(/<[^>]*>/g, '') : 'Unknown';
-            const pubDate = article.PubDate ? new Date(article.PubDate).toLocaleString() : 'N/A';
-            const link = article.Link || '#';
-
-            articleDiv.innerHTML = `
-                <h3>${title}</h3>
-                <p>${description}</p>
-                <p class="article-meta">
-                    <strong>Source:</strong> ${source} |
-                    <strong>Published:</strong> ${pubDate}
-                </p>
-                <a href="${link}" target="_blank" rel="noopener noreferrer">Read More</a>
-            `;
-            articlesContainer.appendChild(articleDiv);
-        });
-    }
-
-    function setLoading(isLoading) {
-        loadingMessage.style.display = isLoading ? 'block' : 'none';
-        if (isLoading) errorMessage.style.display = 'none';
-    }
-
-    function setError(message) {
-        errorMessage.textContent = message || '';
-        errorMessage.style.display = message ? 'block' : 'none';
-        if (message) loadingMessage.style.display = 'none';
-    }
-
-    // --- Initialization ---
-    loginButton.addEventListener('click', redirectToCognito);
-    logoutButton.addEventListener('click', logout);
-
-    // Handle authentication state when the page loads
-    document.addEventListener('DOMContentLoaded', handleAuthentication);
-    ```
-
-6.  **Deploy Frontend Files:**
-    *   Copy the four files (`index.html`, `style.css`, `config.js`, `app.js`) to your S3 bucket configured for static website hosting (Step 7). Use the AWS CLI `sync` command for efficiency.
-        ```bash
-        # Navigate to your frontend project directory in the terminal
-        cd news-aggregator-frontend-manual
-
-        # Sync files to S3 (replace BUCKET_NAME)
-        aws s3 sync . s3://YOUR_S3_BUCKET_NAME/ --delete
         ```
-    *   The `--delete` flag ensures files removed locally are also removed from the bucket.
+    *   Click **Next: Tags**, **Next: Review**.
+    *   Give the policy a name (e.g., `LambdaFetchNewsDynamoDBWritePolicy`). Click **Create policy**.
+    *   Go back to the IAM role tab and attach the newly created policy (`LambdaFetchNewsDynamoDBWritePolicy`) to the Lambda's execution role.
 
-7.  **Invalidate CloudFront Cache:**
-    *   After deploying new frontend code, invalidate the CloudFront cache (Step 8) to ensure users get the latest version.
-    *   Create an invalidation for `/index.html`, `/style.css`, `/config.js`, `/app.js` (or simply `/*`).
+### Step 3: Schedule News Fetching with CloudWatch Events
+
+Trigger the `FetchNews` Lambda function periodically.
+
+1.  Navigate to **CloudWatch** in the AWS Console.
+2.  In the left navigation, under **Events**, click **Rules**.
+3.  Click **Create rule**.
+    *   **Event Source:** Select **Schedule**.
+    *   Configure the schedule (e.g., **Fixed rate of** `1` **Hour**).
+    *   **Targets:**
+        *   Select **Lambda function**.
+        *   Function: Choose `FetchNews`.
+    *   Click **Configure details**.
+    *   **Name:** `FetchNewsSchedule`
+    *   **Description:** (Optional) Trigger FetchNews Lambda every hour.
+    *   Ensure **State** is **Enabled**.
+    *   Click **Create rule**. (CloudWatch will automatically add the necessary permissions to the rule to invoke the Lambda function).
+
+### Step 4: Create Lambda Function for API
+
+Set up a Lambda function to query DynamoDB and serve articles via API Gateway.
+
+1.  Navigate to **Lambda** in the AWS Console.
+2.  Click **Create Function**.
+    *   **Function name:** `GetNews`
+    *   **Runtime:** Python 3.9 (or later)
+    *   **Architecture:** `x86_64`
+    *   **Permissions:** Choose **Create a new role with basic Lambda permissions**.
+3.  Click **Create function**.
+4.  **Add Code:**
+    *   Replace the default `lambda_function.py` content:
+5.  **Set Environment Variables:**
+    *   Under **Configuration** > **Environment variables**, add:
+        *   Key: `DYNAMODB_TABLE`, Value: `NewsArticles`
+6.  **Add Permissions:**
+    *   Go to **Configuration** > **Permissions**. Click the **Role name**.
+    *   In the IAM console, click **Add permissions** > **Attach policies**.
+    *   Click **Create policy**.
+    *   Go to the **JSON** tab and paste the following policy (replace `region` and `account-id` or use the ARN):
+        ```json
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "dynamodb:Scan"
+                        // If using Query later, add "dynamodb:Query"
+                    ],
+                    "Resource": "arn:aws:dynamodb:YOUR_REGION:YOUR_ACCOUNT_ID:table/NewsArticles"
+                    // If using a Global Secondary Index (GSI) later, add its ARN here too
+                    // "arn:aws:dynamodb:YOUR_REGION:YOUR_ACCOUNT_ID:table/NewsArticles/index/YourIndexName"
+                }
+            ]
+        }
+        ```
+    *   Click **Next: Tags**, **Next: Review**.
+    *   Give the policy a name (e.g., `LambdaGetNewsDynamoDBReadPolicy`). Click **Create policy**.
+    *   Attach the newly created policy (`LambdaGetNewsDynamoDBReadPolicy`) to the Lambda's execution role.
+
+### Step 5: Set Up Cognito User Pool
+
+Create a Cognito User Pool for managing users and authentication.
+
+1.  Navigate to **Cognito** in the AWS Console.
+2.  Click **Create user pool**.
+3.  **Configure sign-in experience:**
+    *   Select **User name** and/or **Email** as Cognito user pool sign-in options.
+    *   Click **Next**.
+4.  **Configure security requirements:**
+    *   Choose password policy, MFA options (e.g., Off or Optional), user account recovery options. Use defaults or adjust as needed.
+    *   Click **Next**.
+5.  **Configure sign-up experience:**
+    *   Configure self-service sign-up, attribute verification, required attributes (e.g., `email`).
+    *   Click **Next**.
+6.  **Configure message delivery:**
+    *   Choose SES or Cognito for sending emails. Cognito is simpler for testing.
+    *   Click **Next**.
+7.  **Integrate your app:**
+    *   **User pool name:** `NewsAggregatorUserPool`
+    *   **App client name:** `NewsAggregatorWebAppClient`
+    *   **App type:** `Public client` (important for web apps, implies no client secret).
+    *   **Allowed callback URLs:** Add the HTTPS URL of your future CloudFront distribution (e.g., `https://your-cloudfront-id.cloudfront.net/`). You can add `http://localhost:3000/` for local testing. **These must be HTTPS unless localhost.**
+    *   **Allowed sign-out URLs:** Add the same CloudFront/localhost URLs.
+    *   **Identity providers:** Select `Cognito User Pool`.
+    *   **OAuth 2.0 grant types:** Select `Authorization code grant`.
+    *   **OpenID Connect scopes:** Select `openid`, `email`, `profile`.
+    *   Click **Next**.
+8.  **Review and create:**
+    *   Review all settings.
+    *   Click **Create user pool**.
+9.  **Note Pool details:**
+    *   After creation, go to the **User pool overview** tab and note the **User pool ID**.
+    *   Go to the **App integration** tab, scroll down to **App clients**, and click your app client (`NewsAggregatorWebAppClient`). Note the **Client ID**.
+    *   On the **App integration** tab, under **Domain**, create a Cognito domain prefix (e.g., `your-unique-news-aggregator-auth`) or configure a custom domain. Note the full domain name.
+
+### Step 6: Set Up API Gateway with Cognito Authorizer
+
+Expose the `GetNews` Lambda function via an HTTP API and secure it using the Cognito User Pool.
+
+1.  Navigate to **API Gateway** in the AWS Console.
+2.  Find **HTTP API** and click **Build**.
+3.  Click **Add integration**.
+    *   **Integration type:** `Lambda`
+    *   **AWS Region:** Select your region.
+    *   **Lambda function:** Choose `GetNews`.
+    *   **API name:** `NewsAPI`
+    *   Click **Next**.
+4.  **Configure routes:**
+    *   **Method:** `GET`
+    *   **Resource path:** `/articles`
+    *   **Integration target:** Select the `GetNews` integration created previously.
+    *   Click **Next**.
+5.  **Configure stages:**
+    *   **Stage name:** `prod` (or your preferred name)
+    *   **Auto-deploy:** Enable this for simplicity.
+    *   Click **Next**.
+6.  **Review and create:** Click **Create**.
+7.  **Configure Authorization:**
+    *   In the left navigation for your `NewsAPI`, click **Authorization**.
+    *   Under **Manage authorizers**, click **Create**.
+        *   **Authorizer type:** `JWT`
+        *   **Name:** `CognitoAuthorizer`
+        *   **Identity source:** `$request.header.Authorization`
+        *   **Issuer URL:** `https://cognito-idp.YOUR_REGION.amazonaws.com/YOUR_USER_POOL_ID` (Replace placeholders with your Cognito User Pool region and ID).
+        *   **Audience:** Enter your Cognito **App client ID** noted in Step 5.
+        *   Click **Create**.
+    *   Go back to **Routes**. Select the `GET /articles` route.
+    *   Click **Attach authorizer**. Select `CognitoAuthorizer`. Click **Attach authorizer**.
+8.  **Configure CORS:**
+    *   In the left navigation, click **CORS**.
+    *   Click **Configure**.
+        *   **Access-Control-Allow-Origin:** Enter your CloudFront distribution URL (e.g., `https://your-cloudfront-id.cloudfront.net`). You can also add `http://localhost:3000` for local testing. **Avoid using `*` in production.**
+        *   **Access-Control-Allow-Headers:** Add `authorization` to the default list (e.g., `content-type,x-amz-date,authorization,x-api-key,x-amz-security-token`).
+        *   **Access-Control-Allow-Methods:** Ensure `GET` and `OPTIONS` are included.
+        *   Leave other settings as default or adjust as needed.
+    *   Click **Save**. CORS configuration is automatically deployed if auto-deploy is enabled.
+9.  **Note Invoke URL:**
+    *   Go to **Stages**, select the `prod` stage. Note the **Invoke URL** (e.g., `https://api-id.execute-api.region.amazonaws.com/prod`).
+
+### Step 7: Set Up S3 for Website Hosting
+
+Host the static frontend website files on S3.
+
+1.  Navigate to **S3** in the AWS Console.
+2.  Click **Create bucket**.
+    *   **Bucket name:** `news-aggregator-web-your-unique-suffix` (Must be globally unique).
+    *   **AWS Region:** Choose your preferred region.
+    *   **Block Public Access settings:** Uncheck **Block *all* public access**. Check the box acknowledging that the bucket will become public. This is necessary for *static website hosting only*. Access will later be restricted via CloudFront OAI.
+    *   Click **Create bucket**.
+3.  **Enable Static Website Hosting:**
+    *   Select the newly created bucket.
+    *   Go to the **Properties** tab.
+    *   Scroll down to **Static website hosting** and click **Edit**.
+    *   Select **Enable**.
+    *   **Hosting type:** `Host a static website`.
+    *   **Index document:** `index.html`
+    *   **Error document:** `index.html` (Important for Single Page Application routing).
+    *   Click **Save changes**.
+4.  **Set Bucket Policy (Temporary - will be replaced by CloudFront):**
+    *   Go to the **Permissions** tab.
+    *   Under **Bucket policy**, click **Edit**.
+    *   Paste the following policy, replacing `news-aggregator-web-your-unique-suffix` with your actual bucket name:
+        ```json
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": "*",
+                    "Action": "s3:GetObject",
+                    "Resource": "arn:aws:s3:::news-aggregator-web-your-unique-suffix/*"
+                }
+            ]
+        }
+        ```
+    *   Click **Save changes**. *Note: This policy allows direct public access. We will tighten this in the CloudFront step.*
+
+### Step 8: Set Up CloudFront Distribution for HTTPS
+
+Distribute S3 content via CloudFront for HTTPS, performance, and security.
+
+1.  Navigate to **CloudFront** in the AWS Console.
+2.  Click **Create distribution**.
+3.  **Origin:**
+    *   **Origin domain:** Select your S3 bucket from the dropdown list (e.g., `news-aggregator-web-your-unique-suffix.s3.your-region.amazonaws.com`). **Do NOT select the S3 website endpoint URL.**
+    *   **S3 bucket access:** Select **Yes, use OAI (Origin Access Identity)**.
+        *   **Origin access identity:** Click **Create new OAI**. Accept the default name or provide one.
+        *   **Bucket policy:** Select **Yes, update the bucket policy**. This is crucial – CloudFront will automatically update your S3 bucket policy to *only* allow access from this CloudFront distribution via the OAI, removing the public access policy set earlier.
+4.  **Default cache behavior:**
+    *   **Viewer protocol policy:** Select **Redirect HTTP to HTTPS**.
+    *   **Allowed HTTP methods:** Select **GET, HEAD, OPTIONS**. (OPTIONS is needed for CORS preflight requests).
+    *   **Cache policy:** Choose `CachingOptimized` (or `CachingDisabled` for development if needed, but `CachingOptimized` is generally good).
+    *   **Origin request policy:** Choose `Managed-CORS-S3Origin` (or create a custom one if needed).
+5.  **Settings:**
+    *   **Price class:** Select based on your needs (e.g., `Use all edge locations`).
+    *   **Alternate domain names (CNAMEs):** (Optional) Add your custom domain name if you have one and have configured a corresponding SSL certificate in AWS Certificate Manager (ACM).
+    *   **Custom SSL certificate:** (Optional) If using a CNAME, select your ACM certificate. Otherwise, CloudFront provides a default certificate for its `*.cloudfront.net` domain.
+    *   **Default root object:** Enter `index.html`.
+6.  Click **Create distribution**.
+7.  Wait for the distribution to deploy (Status changes from "Deploying" to the last modified date/time).
+8.  **Note Distribution Details:** Note the **Distribution domain name** (e.g., `d111111abcdef8.cloudfront.net`). This is your primary HTTPS website URL. If using a custom domain, use that instead after DNS configuration.
+9.  **Verify S3 Bucket Policy:** Go back to your S3 bucket -> Permissions -> Bucket Policy. Confirm CloudFront updated it to grant access only to your OAI.
+
+### Step 9: Build and Deploy Frontend
+
+Create a React frontend using AWS Amplify for Cognito integration and Axios for API calls.
+
+1.  **Set Up React Project:**
+    ```bash
+    npx create-react-app news-aggregator-frontend
+    cd news-aggregator-frontend
+    ```
+2.  **Install Dependencies:**
+    ```bash
+    npm install axios aws-amplify @aws-amplify/ui-react
+    ```
+3.  **Configure AWS Amplify:**
+    *   Create a configuration file `src/aws-exports.js`. **Replace ALL placeholder values** with your actual resource details from previous steps.
+
+    ```javascript
+    // src/aws-exports.js
+    const awsmobile = {
+        "aws_project_region": "YOUR_REGION", // e.g., "us-east-1"
+        "aws_cognito_region": "YOUR_REGION", // Should match aws_project_region
+        "aws_user_pools_id": "YOUR_USER_POOL_ID", // From Step 5
+        "aws_user_pools_web_client_id": "YOUR_APP_CLIENT_ID", // From Step 5
+        "oauth": {
+            // Domain looks like: your-prefix.auth.your-region.amazoncognito.com
+            "domain": "YOUR_COGNITO_DOMAIN", // From Step 5 (App Integration -> Domain)
+            "scope": [
+                "email",
+                "openid",
+                "profile"
+                // Add "aws.cognito.signin.user.admin" if needed, but usually not required for basic auth
+            ],
+            // Use your CloudFront HTTPS URL (or localhost for testing)
+            "redirectSignIn": "https://YOUR_CLOUDFRONT_DOMAIN_NAME/", // From Step 8
+            "redirectSignOut": "https://YOUR_CLOUDFRONT_DOMAIN_NAME/", // From Step 8
+            "responseType": "code" // Use 'code' for Authorization Code Grant
+        },
+        "federationTarget": "COGNITO_USER_POOLS",
+        "aws_cloud_logic_custom": [
+            {
+                "name": "NewsAPI", // A friendly name for your API
+                "endpoint": "https://YOUR_API_GATEWAY_INVOKE_URL/prod", // From Step 6 (Invoke URL, includes stage)
+                "region": "YOUR_REGION" // Region where API Gateway is deployed
+            }
+        ]
+    };
+
+    export default awsmobile;
+    ```
+
+4.  **Integrate Amplify in `src/index.js`:**
+    ```javascript
+    // src/index.js
+    import React from 'react';
+    import ReactDOM from 'react-dom/client';
+    import './index.css';
+    import App from './App';
+    import reportWebVitals from './reportWebVitals';
+
+    import { Amplify } from 'aws-amplify';
+    import awsExports from './aws-exports'; // Import the config
+
+    Amplify.configure(awsExports); // Configure Amplify
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(
+      <React.StrictMode>
+        <App />
+      </React.StrictMode>
+    );
+
+    reportWebVitals();
+    ```
+
+5.  **Create App Component (`src/App.js`):**  
+
+7.  **Add Basic Styling (`src/App.css`):**
+    ```css
+    /* src/App.css (Example basic styling) */
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      background-color: #f4f4f4;
+    }
+
+    /* You might need to target Amplify components specifically if default styles aren't enough */
+    /* Example: Targeting the sign-out button if needed */
+    /* [data-amplify-authenticator] button[type="submit"] { ... } */
+
+    /* Let Amplify UI handle most layout, add custom styles for your components */
+    ```
+
+8.  **Build and Deploy:**
+    *   Build the React app:
+        ```bash
+        npm run build
+        ```
+    *   Sync the `build` directory contents to your S3 bucket using AWS CLI. Replace `news-aggregator-web-your-unique-suffix` with your bucket name.
+        ```bash
+        aws s3 sync build/ s3://news-aggregator-web-your-unique-suffix/ --delete
+        ```
+        The `--delete` flag removes files from the S3 bucket that are no longer in the local `build` folder.
+
+9.  **Update CloudFront Cache (Optional but Recommended):**
+    *   After deploying new frontend code, you should invalidate the CloudFront cache to ensure users see the latest version immediately.
+    *   Navigate to **CloudFront** > **Distributions**. Select your distribution.
+    *   Go to the **Invalidations** tab. Click **Create invalidation**.
+    *   Enter `/index.html` and `/`\* (or specific paths like `/static/*`) to invalidate the necessary files.
+    *   Click **Create invalidation**.
 
 ## Testing and Monitoring
 
-1.  **Test Cognito Authentication:** Access your CloudFront HTTPS URL.
-    *   Click the "Log In" button. You should be redirected to the Cognito Hosted UI.
-    *   Sign up for a new account (if enabled) or sign in with existing credentials.
-    *   You should be redirected back to your CloudFront URL.
-2.  **Test News Display:** After successful login and redirect, the `app.js` script should:
-    *   Exchange the authorization code for tokens.
-    *   Update the UI to show "Welcome, [email]!" and the "Log Out" button.
-    *   Call the API Gateway endpoint `/articles` with the ID token.
-    *   Display the fetched articles or an appropriate message ("No articles found.", "Loading...", error message).
-    *   Check the browser's developer console (F12) for any JavaScript errors or network request failures.
-3.  **Test Logout:** Click the "Log Out" button. You should be redirected to Cognito's logout endpoint and then back to your site's configured logout URL (your CloudFront URL), appearing logged out.
-4.  **Test API Security:** Use `curl` or a tool like Postman to directly call your API Gateway `/articles` endpoint *without* a valid `Authorization: Bearer <ID_TOKEN>` header. Verify you receive a `401 Unauthorized` or `403 Forbidden` response.
-5.  **Test News Fetching:** Trigger the `FetchNews` Lambda manually or wait for the schedule. Check DynamoDB and CloudWatch Logs for the `FetchNews` function.
-6.  **Monitor:** Use CloudWatch Logs (for Lambdas), API Gateway Logs/Metrics, and CloudFront Metrics as described previously.
+1.  **Test Cognito Authentication:** Access your CloudFront HTTPS URL (e.g., `https://d111111abcdef8.cloudfront.net`). You should be prompted to sign up or sign in by the Amplify Authenticator UI. Create an account and log in.
+2.  **Test News Display:** After signing in, the `AppContent` component should load. Verify that news articles fetched from your API are displayed. Check the browser's developer console for any errors.
+3.  **Test API Security:** Try accessing the API Gateway Invoke URL for `/articles` directly in your browser or using `curl` *without* an `Authorization` header. It should return a `401 Unauthorized` or similar error. Then try with a valid `Authorization: Bearer <ID_TOKEN>` header.
+4.  **Test News Fetching:** Trigger the `FetchNews` Lambda function manually from the AWS Lambda console or wait for the CloudWatch scheduled event. Check the `NewsArticles` table in DynamoDB to confirm new articles are being added (and duplicates skipped). Check the CloudWatch Logs for the `FetchNews` Lambda function for detailed execution logs.
+5.  **Monitor:** Use **CloudWatch Logs** for both `FetchNews` and `GetNews` Lambda functions to debug issues. Monitor **API Gateway** metrics and logs for API usage and errors. Check **CloudFront** metrics for website traffic and cache performance.
 
 ## Cleanup (Optional)
 
-*(Same as before)* - Follow the steps to delete CloudFront, S3, API Gateway, Lambdas, CloudWatch Rule, DynamoDB table, Cognito User Pool, IAM Roles/Policies, and OAI to avoid costs.
+To avoid ongoing AWS charges after you are finished with the project, delete the resources you created. Delete them in roughly the reverse order of creation:
+
+1.  **CloudFront Distribution:** Disable and then delete the distribution.
+2.  **S3 Bucket:** Empty the bucket first, then delete it. CloudFront OAI might prevent deletion until the distribution is fully deleted.
+3.  **API Gateway:** Delete the `NewsAPI`.
+4.  **Lambda Functions:** Delete the `FetchNews` and `GetNews` functions.
+5.  **CloudWatch Event Rule:** Delete the `FetchNewsSchedule` rule.
+6.  **DynamoDB Table:** Delete the `NewsArticles` table.
+7.  **Cognito User Pool:** Delete the `NewsAggregatorUserPool`.
+8.  **IAM Roles and Policies:** Delete the execution roles created for the Lambda functions and the custom policies (`LambdaFetchNewsDynamoDBWritePolicy`, `LambdaGetNewsDynamoDBReadPolicy`) if they are no longer needed.
+9.  **CloudWatch Log Groups:** Associated log groups can also be deleted.
+10. **CloudFront Origin Access Identity (OAI):** Delete the OAI if it's not used by other distributions.
 
 ## Resources
 
@@ -600,6 +477,6 @@ Create a static frontend (HTML, CSS, JavaScript) that manually handles the Cogni
 *   [Amazon S3 Documentation](https://aws.amazon.com/s3/getting-started/)
 *   [Amazon CloudFront Documentation](https://aws.amazon.com/cloudfront/getting-started/)
 *   [Amazon Cognito Documentation](https://aws.amazon.com/cognito/getting-started/)
-*   [OAuth 2.0 Authorization Framework](https://tools.ietf.org/html/rfc6749)
-*   [Proof Key for Code Exchange (PKCE)](https://tools.ietf.org/html/rfc7636)
+*   [AWS Amplify Documentation (v6+)](https://docs.amplify.aws/)
 *   [feedparser Documentation](https://feedparser.readthedocs.io/en/latest/)
+*   [Axios Documentation](https://axios-http.com/docs/intro)
