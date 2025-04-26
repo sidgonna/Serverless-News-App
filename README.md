@@ -33,19 +33,7 @@ The architecture consists of the following components:
 *   **AWS CloudFront**: Distributes the S3 content, provides HTTPS, and improves performance.
 *   **Frontend (React)**: A single-page application that interacts with Cognito for authentication and the secured API Gateway endpoint to display news.
 
-```mermaid
-graph LR
-    CloudWatchEvents[CloudWatch Events] --> LambdaFetch[Lambda (FetchNews)]
-    LambdaFetch --> DynamoDB[DynamoDB (NewsArticles)]
-    API_Gateway[API Gateway] --> LambdaGet[Lambda (GetNews)]
-    LambdaGet --> DynamoDB
-    Cognito[Cognito User Pool] --> API_Gateway
-    Frontend[Frontend (React)] --> Cognito
-    Frontend --> API_Gateway
-    S3[S3 Bucket] --> CloudFront[CloudFront Distribution]
-    CloudFront --> Frontend
-    User[User] --> CloudFront
-```
+
 
 ## Implementation Details
 
